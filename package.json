@@ -1,0 +1,8 @@
+{
+  "name": "pl-imagery-lab",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.0"
+  }
+}

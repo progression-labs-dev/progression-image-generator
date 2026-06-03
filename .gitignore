@@ -1,0 +1,15 @@
+node_modules/
+web/node_modules/
+web/.next/
+web/.turbo/
+web/public/imgly/
+.venv/
+.DS_Store
+bun.lockb
+*.log
+.playwright-mcp/
+
+# generated output / experiments (regenerate with the CLI; keep the repo lean)
+out/
+engravings/
+engravings2/
