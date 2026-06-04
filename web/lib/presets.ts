@@ -3,6 +3,7 @@
 // so loading is a deterministic re-render. Source image + mask are NOT stored.
 import { defaultParams } from "./params";
 import { PAL, BRAND_COLORS, FIELD, saneCharset } from "./palettes";
+import { SHIPPED_PRESETS } from "./shipped-presets";
 import type { Engine, RenderParams } from "./render";
 
 export interface Preset {
@@ -146,6 +147,13 @@ export const BUILTIN_PRESETS: Preset[] = [
     engine: "deck",
     params: defaultParams("deck", { direction: "subject", asciiInkCustom: FIELD.orange }),
   },
+  // user-created looks promoted to built-ins (see lib/shipped-presets.ts) — merged over
+  // engine defaults so any newer param is filled in, exactly like loading a saved preset.
+  ...SHIPPED_PRESETS.map((p) => ({
+    name: p.name,
+    engine: p.engine,
+    params: defaultParams(p.engine, p.params),
+  })),
 ].map((p, i) => ({
   id: `builtin-${i}`,
   builtIn: true,
