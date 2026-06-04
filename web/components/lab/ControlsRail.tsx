@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Accordion } from "@/components/ui/accordion";
 import {
+  ProcessingSection,
   PixelationSection,
   RegionSection,
   ColourSection,
@@ -11,7 +12,7 @@ import {
   TextureSection,
 } from "./sections";
 
-const OPEN = ["source", "pixelation", "region", "colour", "ascii", "texture", "export"];
+const OPEN = ["source", "processing", "pixelation", "region", "colour", "ascii", "texture", "export"];
 
 // `header` and `footer` slots let MosaicLab inject the preset bar (P9) and the
 // source/mask + export sections (P5/P7) without this component owning them.
@@ -36,6 +37,7 @@ export function ControlsRail({
       <ScrollArea className="flex-1">
         <Accordion defaultValue={OPEN}>
           {source}
+          <ProcessingSection />
           <PixelationSection />
           <RegionSection />
           <ColourSection />

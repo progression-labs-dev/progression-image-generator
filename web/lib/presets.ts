@@ -2,7 +2,7 @@
 // user presets persisted in localStorage. A preset captures the FULL param set
 // so loading is a deterministic re-render. Source image + mask are NOT stored.
 import { defaultParams } from "./params";
-import { PAL, BRAND_COLORS, FIELD } from "./palettes";
+import { PAL, BRAND_COLORS, FIELD, saneCharset } from "./palettes";
 import type { Engine, RenderParams } from "./render";
 
 export interface Preset {
@@ -73,6 +73,22 @@ export const BUILTIN_PRESETS: Preset[] = [
       backgroundMode: "transparent",
       palette: PAL.blue,
       cellSize: 16,
+    }),
+  },
+  {
+    name: "Engraving fill · subject cut-out",
+    engine: "mosaic",
+    params: defaultParams("mosaic", {
+      process: "adaptive",
+      processContrast: 1.6,
+      processBias: 0.15,
+      direction: "subject",
+      splitEnabled: true,
+      splitPosition: 0.5,
+      splitAngle: 0,
+      backgroundMode: "transparent",
+      palette: PAL.blue,
+      cellSize: 14,
     }),
   },
   {
@@ -154,7 +170,20 @@ export function loadUserPresets(): Preset[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw) as { version: number; presets: Preset[] };
     if (!parsed?.presets) return [];
-    return parsed.presets.map((p) => ({ ...p, builtIn: false }));
+    // one-time migration: an older base-ui Input bug persisted asciiCharset as the literal
+    // string "undefined" (its letters then rendered as glyphs). Scrub any such value back to
+    // the default charset and re-save, so a dirty preset can never resurface the word again.
+    let migrated = false;
+    const presets = parsed.presets.map((p) => {
+      const clean = saneCharset(p.params?.asciiCharset);
+      if (clean !== p.params?.asciiCharset) {
+        migrated = true;
+        return { ...p, params: { ...p.params, asciiCharset: clean } };
+      }
+      return p;
+    });
+    if (migrated) persist(presets);
+    return presets.map((p) => ({ ...p, builtIn: false }));
   } catch {
     return [];
   }

@@ -16,11 +16,13 @@ import {
   LUMA_R,
   LUMA_G,
   LUMA_B,
+  saneCharset,
   type RGB,
   type Interp,
   type Palette,
 } from "./palettes";
 import { mulberry32 } from "./rng";
+import { adaptiveProcess, type ProcessMode } from "./process";
 
 export type { RGB, Interp, Palette };
 
@@ -61,6 +63,17 @@ export interface RenderParams {
   solidColor: RGB;
   boundaryFeather: number; // 0 = hard split edge; >0 = probabilistic scatter band (fraction of extent)
   maskThreshold: number; // 128 — used when building the mask, kept for reference
+  coverEdges: boolean; // dilate the effect mask ~1 cell so boundary cells fully cover the
+  // subject's outline (no original photo showing at the petal/silhouette edges). Cut-out trims overflow.
+  // ── image pre-processing (adaptive local-contrast "fill") ──
+  // "adaptive" normalizes each region's LOCAL detail to full range so dark/flat areas
+  // still become vivid pixels — the dissolve covers completely (no see-through gaps).
+  // "off" = no-op (parity preserved). Whole-image: feeds the base layer AND the cells.
+  process: ProcessMode; // "off" | "adaptive"
+  processRadius: number; // local window radius px
+  processBias: number; // brightness lift −0.5..0.5
+  processContrast: number; // local-detail gain 0..4
+  processHardness: number; // 0 tonal → 1 hard engraving threshold
   // ── background compositing (needs a subject mask) ──
   // photo = keep the original scene behind the subject (default — parity preserved);
   // transparent = cut the subject out onto transparency ("just the subject");
@@ -262,14 +275,17 @@ function asciiGlyph(charset: string, cx: number, cy: number): string {
 // regular grid (cell stride is even, so the low bits of cx*A+cy*B barely move → the
 // "0 / +" checkerboard). Running the seed through an xxhash-style finalizer spreads
 // it across the WHOLE charset while staying deterministic per position.
-function scatterGlyph(charset: string, cx: number, cy: number): string {
+export function scatterGlyph(charset: string, cx: number, cy: number): string {
   let h = (Math.imul(cx | 0, POSHASH_A) + Math.imul(cy | 0, POSHASH_B)) >>> 0;
   h ^= h >>> 16;
   h = Math.imul(h, 2246822507) >>> 0;
   h ^= h >>> 13;
   h = Math.imul(h, 3266489909) >>> 0;
   h ^= h >>> 16;
-  return charset[h % charset.length];
+  // `h ^= …` yields a SIGNED int32, so without this `>>> 0` the high-bit-set ~50% of
+  // positions give a NEGATIVE index → charset[-n] === undefined → ctx.fillText(undefined)
+  // paints the literal word "undefined". Coerce to uint32 before the modulo.
+  return charset[(h >>> 0) % charset.length];
 }
 const glyphFor = (p: RenderParams, charset: string, cx: number, cy: number): string =>
   p.asciiGlyphScatter ? scatterGlyph(charset, cx, cy) : asciiGlyph(charset, cx, cy);
@@ -293,7 +309,7 @@ function drawAsciiChar(
   p: RenderParams,
 ) {
   if (posHash(cx, cy) > p.asciiDensity) return;
-  const charset = p.asciiCharset || ASCII_CHARSET;
+  const charset = saneCharset(p.asciiCharset);
   const char =
     p.asciiArt && p.asciiGlyphMode === "ramp"
       ? rampGlyph(p.asciiRamp || "@%#*+=-:. ", brightness)
@@ -351,9 +367,86 @@ function makeScratch(width: number, height: number): Ctx {
   return c.getContext("2d") as Ctx;
 }
 
+// Subject mask as a drawable canvas (subject = opaque, background = transparent),
+// cached per mask reference. Used by the background composite so the cut-out needs
+// NO per-frame getImageData — reading the live GPU-backed canvas back each frame is
+// catastrophically slow (~850ms for 1MP). Rebuilds only when the mask changes.
+const maskSourceCache = new WeakMap<Uint8Array, CanvasImageSource & { width: number; height: number }>();
+function maskAlphaSource(mask: Uint8Array, width: number, height: number) {
+  const cached = maskSourceCache.get(mask);
+  if (cached && cached.width === width && cached.height === height) return cached;
+  const sctx = makeScratch(width, height);
+  const id = sctx.createImageData(width, height);
+  const d = id.data;
+  for (let i = 0; i < mask.length; i++) if (mask[i]) d[i * 4 + 3] = 255; // alpha only; rgb stays 0
+  sctx.putImageData(id, 0, 0);
+  const src = (sctx as unknown as { canvas: CanvasImageSource & { width: number; height: number } }).canvas;
+  maskSourceCache.set(mask, src);
+  return src;
+}
+
+// Subject bounding box (in px), cached per mask reference. Lets the split line sweep
+// across the SUBJECT instead of the whole frame, so "Split position" always divides the
+// subject (otherwise the effect vanishes once the line clears the subject's edge).
+const maskBBoxCache = new WeakMap<Uint8Array, { minX: number; minY: number; maxX: number; maxY: number }>();
+function subjectBBox(mask: Uint8Array, width: number, height: number) {
+  const hit = maskBBoxCache.get(mask);
+  if (hit) return hit;
+  let minX = width, minY = height, maxX = -1, maxY = -1;
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    for (let x = 0; x < width; x++) {
+      if (mask[row + x]) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  const bb = maxX < 0 ? { minX: 0, minY: 0, maxX: width - 1, maxY: height - 1 } : { minX, minY, maxX, maxY };
+  maskBBoxCache.set(mask, bb);
+  return bb;
+}
+
 interface Block {
   x: number;
   y: number;
+}
+
+// Is a cell inside the effect region? Tests the cell centre; when `dilate` (full-coverage
+// mode) also accepts a cell whose 2·cellSize block overlaps the mask, so boundary cells
+// draw and there's no sub-cell sliver of original at the silhouette edge (cut-out trims
+// any overflow back to the true mask).
+function cellCovered(
+  effMask: Uint8Array,
+  width: number,
+  height: number,
+  cx: number,
+  cy: number,
+  cellSize: number,
+  dilate: boolean,
+): boolean {
+  const at = (px: number, py: number) => {
+    const ix = Math.round(px),
+      iy = Math.round(py);
+    if (ix < 0 || ix >= width || iy < 0 || iy >= height) return false;
+    return effMask[iy * width + ix] !== 0;
+  };
+  if (at(cx, cy)) return true;
+  if (!dilate) return false;
+  const s = cellSize;
+  // 8-neighbourhood at the block extent → fills the edge band on straight AND diagonal outlines
+  return (
+    at(cx - s, cy) ||
+    at(cx + s, cy) ||
+    at(cx, cy - s) ||
+    at(cx, cy + s) ||
+    at(cx - s, cy - s) ||
+    at(cx + s, cy - s) ||
+    at(cx - s, cy + s) ||
+    at(cx + s, cy + s)
+  );
 }
 
 // ───────────────────────── core renderer (mirrors renderVariant + deck passes) ─────────────────────────
@@ -378,9 +471,18 @@ export function render(ctx: Ctx, src: Src, mask: Uint8Array | null, p: RenderPar
     return;
   }
 
-  // ── base layer = original sharp photo ──
+  // ── adaptive pre-process: the buffer the base layer AND the cells sample from.
+  // Whole-image, so the sharp side is the processed version too ("no raw original"). ──
+  const useProc = p.process === "adaptive";
+  const sampleData = useProc ? adaptiveProcess(src, p) : data;
+  const sampleSrc: Src = useProc ? { data: sampleData, width, height } : src;
+  // dilate the effect mask (cover the silhouette edge band) when asked, or implicitly
+  // whenever processing is on (full-coverage intent).
+  const dilate = p.coverEdges || useProc;
+
+  // ── base layer = the (optionally processed) image ──
   const id0 = ctx.createImageData(width, height);
-  id0.data.set(data);
+  id0.data.set(sampleData);
   ctx.putImageData(id0, 0, 0);
 
   // ── ASCII-art "solid" background: replace the scene with a flat field so the
@@ -417,6 +519,17 @@ export function render(ctx: Ctx, src: Src, mask: Uint8Array | null, p: RenderPar
   const snx = Math.cos(srad),
     sny = Math.sin(srad);
   const featherRange = (Math.abs(snx) * width + Math.abs(sny) * height) * p.boundaryFeather;
+  // The point the split line passes through. Frame-relative by default (parity-identical
+  // to isOnEffectSide). For a masked SUBJECT, sweep splitPosition across the subject's
+  // bounding box so the slider always divides the subject instead of dead-zoning once the
+  // line moves past its edge. The split test is then `(x-anchorX)*snx + (y-anchorY)*sny >= 0`.
+  let anchorX = p.splitPosition * width;
+  let anchorY = p.splitPosition * height;
+  if (useSplit && p.direction === "subject" && mask) {
+    const bb = subjectBBox(mask, width, height);
+    anchorX = bb.minX + p.splitPosition * (bb.maxX - bb.minX);
+    anchorY = bb.minY + p.splitPosition * (bb.maxY - bb.minY);
+  }
 
   const opacityFor = (cy: number) =>
     p.asciiOpacityModel === "fade"
@@ -433,8 +546,7 @@ export function render(ctx: Ctx, src: Src, mask: Uint8Array | null, p: RenderPar
       if (useSplit) {
         if (p.boundaryFeather > 0) {
           // feathered/scattered dissolve boundary (vs the hard split line)
-          const d =
-            (cellX - p.splitPosition * width) * snx + (cellY - p.splitPosition * height) * sny;
+          const d = (cellX - anchorX) * snx + (cellY - anchorY) * sny;
           const prob =
             d > featherRange / 2
               ? 1
@@ -442,14 +554,11 @@ export function render(ctx: Ctx, src: Src, mask: Uint8Array | null, p: RenderPar
                 ? 0
                 : (d + featherRange / 2) / featherRange;
           if (posHash(cellX, cellY) >= prob) continue;
-        } else if (!isOnEffectSide(cellX, cellY, width, height, p.splitPosition, p.splitAngle)) {
+        } else if ((cellX - anchorX) * snx + (cellY - anchorY) * sny < 0) {
           continue;
         }
       }
-      if (effMask) {
-        const idx = Math.round(cellY) * width + Math.round(cellX);
-        if (idx < 0 || idx >= effMask.length || effMask[idx] === 0) continue;
-      }
+      if (effMask && !cellCovered(effMask, width, height, cellX, cellY, cellSize, dilate)) continue;
 
       // per-column sample jitter (mosaic) — shifts only the SAMPLE point
       let sampleY = cellY;
@@ -457,11 +566,12 @@ export function render(ctx: Ctx, src: Src, mask: Uint8Array | null, p: RenderPar
         const colHash = (Math.sin(col * JITTER_HASH_MUL) * JITTER_HASH_SCALE) % 1;
         sampleY = Math.min(cellY + Math.abs(colHash) * p.jitterMagnitude * cellSize, height - 1);
       }
-      const [r, g, b] = sampleColorAt(src, cellX, sampleY);
+      const [r, g, b] = sampleColorAt(sampleSrc, cellX, sampleY);
       const brightness = getBrightness(r, g, b);
 
-      // brightness cutoff (deck) — skip dark cells entirely
-      if (p.brightnessCutoff > 0 && brightness < p.brightnessCutoff) continue;
+      // brightness cutoff (deck) — skip dark cells entirely. Bypassed when processing
+      // is on (adaptive fill wants every cell drawn → no gaps).
+      if (!useProc && p.brightnessCutoff > 0 && brightness < p.brightnessCutoff) continue;
 
       let fr = r,
         fg = g,
@@ -500,15 +610,11 @@ export function render(ctx: Ctx, src: Src, mask: Uint8Array | null, p: RenderPar
         const ax = col * astep + cellSize,
           ay = row * astep + cellSize;
         if (ax >= width || ay >= height) continue;
-        if (useSplit && !isOnEffectSide(ax, ay, width, height, p.splitPosition, p.splitAngle))
-          continue;
-        if (effMask) {
-          const idx = Math.round(ay) * width + Math.round(ax);
-          if (idx < 0 || idx >= effMask.length || effMask[idx] === 0) continue;
-        }
-        const [gr, gg, gb] = sampleColorAt(src, ax, ay);
+        if (useSplit && (ax - anchorX) * snx + (ay - anchorY) * sny < 0) continue;
+        if (effMask && !cellCovered(effMask, width, height, ax, ay, cellSize, dilate)) continue;
+        const [gr, gg, gb] = sampleColorAt(sampleSrc, ax, ay);
         const gB = getBrightness(gr, gg, gb);
-        if (p.brightnessCutoff > 0 && gB < p.brightnessCutoff) continue;
+        if (!useProc && p.brightnessCutoff > 0 && gB < p.brightnessCutoff) continue;
         let gfr = gr,
           gfg = gg,
           gfb = gb;
@@ -533,7 +639,7 @@ export function render(ctx: Ctx, src: Src, mask: Uint8Array | null, p: RenderPar
     const blobRadius = cellSize * p.blobRadiusMul;
     const [ir, ig, ib] = ink;
     ctx.globalCompositeOperation = "source-over";
-    const charset = p.asciiCharset || ASCII_CHARSET;
+    const charset = saneCharset(p.asciiCharset);
     const fontSize = Math.max(p.fontSizeMin, cellSize * p.fontSizeMul);
     for (const block of blocks) {
       let closestDist = Infinity;
@@ -580,27 +686,21 @@ export function render(ctx: Ctx, src: Src, mask: Uint8Array | null, p: RenderPar
     ctx.globalCompositeOperation = "source-over";
   }
 
-  // ── background clip (final pass) — drop everything outside the subject mask so
-  // the result is "just the subject". Runs last so grain/blobs on the background
-  // are removed too. No-op without a mask or in the default "photo" mode → keeps
-  // byte-for-byte parity with mosaic-core. (direction "solid" returns earlier.)
+  // ── background composite (final pass) — keep only the subject so the result is
+  // "just the subject". Done with GPU compositing against a cached mask canvas — NOT
+  // a per-frame getImageData readback, which is catastrophically slow on a GPU-backed
+  // canvas (~850ms for 1MP → dragging stalls). No-op without a mask or in the default
+  // "photo" mode → parity preserved. (direction "solid" returns earlier.)
   if (mask && (p.backgroundMode === "transparent" || p.backgroundMode === "solid")) {
-    const id = ctx.getImageData(0, 0, width, height);
-    const d = id.data;
-    if (p.backgroundMode === "transparent") {
-      for (let i = 0; i < mask.length; i++) if (mask[i] === 0) d[i * 4 + 3] = 0;
-    } else {
-      const [br, bg, bb] = p.solidColor;
-      for (let i = 0; i < mask.length; i++) {
-        if (mask[i] === 0) {
-          const j = i * 4;
-          d[j] = br;
-          d[j + 1] = bg;
-          d[j + 2] = bb;
-          d[j + 3] = 255;
-        }
-      }
+    const maskSrc = maskAlphaSource(mask, width, height);
+    const prevOp = ctx.globalCompositeOperation;
+    ctx.globalCompositeOperation = "destination-in"; // erase everything outside the subject
+    ctx.drawImage(maskSrc, 0, 0);
+    if (p.backgroundMode === "solid") {
+      ctx.globalCompositeOperation = "destination-over"; // lay a flat field behind the subject
+      ctx.fillStyle = rgbStr(p.solidColor[0], p.solidColor[1], p.solidColor[2]);
+      ctx.fillRect(0, 0, width, height);
     }
-    ctx.putImageData(id, 0, 0);
+    ctx.globalCompositeOperation = prevOp;
   }
 }

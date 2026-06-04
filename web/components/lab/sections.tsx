@@ -110,6 +110,63 @@ export function PixelationSection() {
   );
 }
 
+export function ProcessingSection() {
+  const { params } = useLab();
+  const on = params.process !== "off";
+  return (
+    <Section value="processing" title="Processing">
+      <ToggleRow
+        k="process"
+        label="Mode"
+        hint="Adaptive fill boosts each area's LOCAL contrast behind the pixels, so dark / flat regions still become vivid pixels — the dissolve covers completely, no see-through gaps. Best with Remove background + Background → Cut out."
+        options={[
+          { value: "off", label: "Off" },
+          { value: "adaptive", label: "Adaptive fill" },
+        ]}
+      />
+      {on && (
+        <>
+          <SliderRow
+            k="processRadius"
+            label="Detail radius"
+            hint="Local window size in pixels. Smaller = finer, more local contrast; larger = broader."
+            min={2}
+            max={64}
+            fmt={(v) => `${v}px`}
+          />
+          <SliderRow
+            k="processBias"
+            label="Brightness"
+            hint="Lifts the whole result brighter — fills shadows more."
+            min={-0.5}
+            max={0.5}
+            step={0.01}
+            fmt={(v) => v.toFixed(2)}
+          />
+          <SliderRow
+            k="processContrast"
+            label="Contrast"
+            hint="Local-detail gain. Higher = punchier texture in the pixels."
+            min={0}
+            max={4}
+            step={0.05}
+            fmt={(v) => `${v.toFixed(2)}×`}
+          />
+          <SliderRow
+            k="processHardness"
+            label="Hardness"
+            hint="0 = smooth tones; 1 = hard black/white adaptive threshold (engraving look)."
+            min={0}
+            max={1}
+            step={0.01}
+            fmt={(v) => v.toFixed(2)}
+          />
+        </>
+      )}
+    </Section>
+  );
+}
+
 export function RegionSection() {
   const { params } = useLab();
   const isSolid = params.direction === "solid";
@@ -174,6 +231,13 @@ export function RegionSection() {
             { value: "transparent", label: "Cut out" },
             { value: "solid", label: "Solid" },
           ]}
+        />
+      )}
+      {!isSolid && (
+        <SwitchRow
+          k="coverEdges"
+          label="Fill edges"
+          hint="Extend the pixels out to the subject's outline so no original photo shows at the petal / silhouette edges. Best with Background → Cut out (it trims any overflow). Needs a subject mask. (Adaptive fill turns this on automatically.)"
         />
       )}
       {(isSolid || bgSolid) && (
@@ -287,7 +351,7 @@ function CharsetRow() {
     >
       <div className="space-y-2">
         <Input
-          value={params.asciiCharset}
+          value={params.asciiCharset ?? ""}
           onChange={(e) => set("asciiCharset", e.target.value)}
           spellCheck={false}
           autoComplete="off"

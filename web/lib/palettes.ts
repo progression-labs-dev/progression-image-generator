@@ -11,6 +11,27 @@ export interface Palette {
 // shapes.ts charset (note trailing "LABS" brand glyphs, and the / \ | symbols)
 export const ASCII_CHARSET = "0123456789@#$%&*+=?<>{}[]/\\|LABS";
 
+// Guard the ASCII charset against the empty string and the coercion artifacts
+// "undefined" / "null" that an older controlled-input bug left in the value. Crucially it
+// strips them as SUBSTRINGS, not just as the exact string: under that bug the field could
+// hold "undefined", and typing onto the end of it (no select-all) produced e.g.
+// "undefinedprog", whose letters then rendered as the word "undefined" on the canvas. We
+// remove every embedded "undefined"/"null" token and fall back to the default if nothing
+// usable remains. No-op for normal charsets (incl. ASCII_CHARSET, which has no lowercase),
+// so the renderer stays byte-identical to mosaic-core. Used by the renderer, the load
+// reducer, AND the preset migration, so a bad value can never reach the canvas or persist.
+export function saneCharset(c: unknown): string {
+  if (typeof c !== "string") return ASCII_CHARSET;
+  // Loop, because one pass can REJOIN a token (e.g. "uundefinedndefinedprog" →
+  // "undefinedprog" → "prog"); keep stripping until the string stops changing.
+  let cleaned = c;
+  for (let prev = ""; cleaned !== prev; ) {
+    prev = cleaned;
+    cleaned = cleaned.replace(/undefined|null/gi, "");
+  }
+  return cleaned === "" ? ASCII_CHARSET : cleaned;
+}
+
 // ── multi-stop gradient palettes (mosaic) ──
 // HSL palettes stay within the blue hue family (no neutral endpoint → no magenta).
 // blueOrange is RGB-lerped through a light neutral (diverging) to stay clean.

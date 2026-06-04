@@ -24,6 +24,10 @@
 .DS_Store
 *.pem
 
+# generated proof / diagnostic images (regenerate via scripts/proof-no-undefined.mjs)
+/proof-*.png
+/diag-*.png
+
 # debug
 npm-debug.log*
 yarn-debug.log*

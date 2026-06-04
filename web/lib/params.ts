@@ -1,7 +1,7 @@
 // Default RenderParams per engine + the params reducer.
 // Mosaic defaults reproduce mosaic-core.mjs exactly (verified by scripts/parity.mjs).
 // Deck defaults reproduce process-deck-image.js.
-import { PAL, FIELD, BRAND_COLORS, ASCII_CHARSET, type RGB } from "./palettes";
+import { PAL, FIELD, BRAND_COLORS, ASCII_CHARSET, saneCharset, type RGB } from "./palettes";
 import type { Engine, RenderParams } from "./render";
 
 const SHARED = {
@@ -24,6 +24,12 @@ const SHARED = {
   splitEnabled: false,
   boundaryFeather: 0,
   backgroundMode: "photo",
+  coverEdges: false,
+  process: "off",
+  processRadius: 14,
+  processBias: 0.12,
+  processContrast: 1.4,
+  processHardness: 0,
   asciiArt: false,
   asciiGlyphMode: "random",
   asciiRamp: "@%#*+=-:. ",
@@ -128,14 +134,24 @@ export function paramsReducer(state: RenderParams, action: ParamsAction): Render
         splitPosition: state.splitPosition,
         splitAngle: state.splitAngle,
         backgroundMode: state.backgroundMode,
+        coverEdges: state.coverEdges,
+        process: state.process,
+        processRadius: state.processRadius,
+        processBias: state.processBias,
+        processContrast: state.processContrast,
+        processHardness: state.processHardness,
         asciiInk: state.asciiInk,
         asciiInkCustom: state.asciiInkCustom,
         solidColor: state.solidColor,
       });
-    case "load":
+    case "load": {
       // merge over engine defaults so presets saved before a param existed still get
-      // a sensible value (e.g. asciiGlyphScatter / backgroundMode on older presets).
-      return { ...defaultParams(action.params.engine), ...action.params };
+      // a sensible value (e.g. asciiGlyphScatter / backgroundMode on older presets),
+      // and sanitize a charset an older bug saved as the literal string "undefined".
+      const merged = { ...defaultParams(action.params.engine), ...action.params };
+      merged.asciiCharset = saneCharset(merged.asciiCharset);
+      return merged;
+    }
     default:
       return state;
   }
