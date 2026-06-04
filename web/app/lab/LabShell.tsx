@@ -10,7 +10,7 @@ const MosaicLab = dynamic(
     ssr: false,
     loading: () => (
       <div className="flex h-dvh w-full items-center justify-center bg-[#0b0b12] text-sm text-zinc-400">
-        Loading PL Imagery Lab…
+        Loading Progression Image Generator…
       </div>
     ),
   },

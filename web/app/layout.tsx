@@ -8,9 +8,9 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 
 export const metadata: Metadata = {
-  title: "PL Imagery Lab — Pixel Dissolve",
+  title: "Progression Image Generator",
   description:
-    "Interactive playground for the Progression Labs mosaic / ASCII-gradient image treatment.",
+    "Progression Labs image generator — the Pixel Dissolve mosaic / ASCII-gradient treatment.",
 };
 
 export default function RootLayout({

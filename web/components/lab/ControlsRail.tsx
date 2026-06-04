@@ -29,7 +29,7 @@ export function ControlsRail({
     <aside className="flex w-[360px] shrink-0 flex-col border-r border-border bg-background">
       <div className="border-b border-border px-4 py-3">
         <div className="flex items-baseline justify-between gap-2">
-          <h1 className="text-sm font-semibold leading-none">PL Imagery Lab</h1>
+          <h1 className="text-sm font-semibold leading-none">Progression Image Generator</h1>
           <span className="text-[10px] text-muted-foreground">Pixel Dissolve</span>
         </div>
         {header && <div className="mt-2.5">{header}</div>}
