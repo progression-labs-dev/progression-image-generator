@@ -75,6 +75,9 @@ export interface RenderParams {
   // ── ASCII overlay ──
   ascii: boolean;
   asciiCharset: string;
+  asciiGlyphScatter: boolean; // true = avalanche-hash the glyph pick so the WHOLE charset shows.
+  // false = legacy mosaic-core pick, which aliases to ~1–2 glyphs on the regular grid (the
+  // "0 / +" checkerboard). App defaults true; the parity harness leaves it unset → legacy → byte-identical.
   asciiDensity: number; // fill-gate: posHash<=density draws. mosaic .4 / deck .5
   asciiInk: AsciiInk;
   asciiInkCustom: RGB; // custom ink OR deck brand tint
@@ -255,6 +258,21 @@ function drawConvexCircle(
 function asciiGlyph(charset: string, cx: number, cy: number): string {
   return charset[((cx * POSHASH_A + cy * POSHASH_B) >>> 0) % charset.length];
 }
+// Avalanche-mixed glyph pick. The legacy hash above collapses to ~1–2 glyphs on a
+// regular grid (cell stride is even, so the low bits of cx*A+cy*B barely move → the
+// "0 / +" checkerboard). Running the seed through an xxhash-style finalizer spreads
+// it across the WHOLE charset while staying deterministic per position.
+function scatterGlyph(charset: string, cx: number, cy: number): string {
+  let h = (Math.imul(cx | 0, POSHASH_A) + Math.imul(cy | 0, POSHASH_B)) >>> 0;
+  h ^= h >>> 16;
+  h = Math.imul(h, 2246822507) >>> 0;
+  h ^= h >>> 13;
+  h = Math.imul(h, 3266489909) >>> 0;
+  h ^= h >>> 16;
+  return charset[h % charset.length];
+}
+const glyphFor = (p: RenderParams, charset: string, cx: number, cy: number): string =>
+  p.asciiGlyphScatter ? scatterGlyph(charset, cx, cy) : asciiGlyph(charset, cx, cy);
 // luminance → glyph from a dark→light ramp (classic ASCII art)
 function rampGlyph(ramp: string, brightness: number): string {
   if (!ramp.length) return " ";
@@ -279,7 +297,7 @@ function drawAsciiChar(
   const char =
     p.asciiArt && p.asciiGlyphMode === "ramp"
       ? rampGlyph(p.asciiRamp || "@%#*+=-:. ", brightness)
-      : asciiGlyph(charset, cx, cy);
+      : glyphFor(p, charset, cx, cy);
   const fontSize = Math.max(p.fontSizeMin, cellSize * p.fontSizeMul);
   ctx.font = `${p.fontWeight} ${fontSize}px ${p.fontFamily}`;
   ctx.textAlign = "center";
@@ -536,7 +554,7 @@ export function render(ctx: Ctx, src: Src, mask: Uint8Array | null, p: RenderPar
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillStyle = `rgba(${ir},${ig},${ib},${p.blobRedrawAlpha})`;
-        ctx.fillText(asciiGlyph(charset, bCx, bCy), bCx, bCy);
+        ctx.fillText(glyphFor(p, charset, bCx, bCy), bCx, bCy);
       }
     }
   }

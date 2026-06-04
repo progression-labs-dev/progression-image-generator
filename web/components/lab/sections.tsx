@@ -13,7 +13,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PAL, FIELD, BRAND_SWATCHES, type RGB, type Palette } from "@/lib/palettes";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { PAL, FIELD, BRAND_SWATCHES, ASCII_CHARSET, type RGB, type Palette } from "@/lib/palettes";
 import { multiStopGradientColor, multiStopGradientColorRGB } from "@/lib/render";
 import { useLab } from "./lab-context";
 import { Row, SliderRow, SwitchRow, ToggleRow, SelectRow } from "./controls";
@@ -266,8 +268,54 @@ export function ColourSection() {
   );
 }
 
+const CHARSET_PRESETS: { name: string; chars: string }[] = [
+  { name: "Full", chars: ASCII_CHARSET },
+  { name: "Letters", chars: "PROGRESSIONLABS" },
+  { name: "Digits", chars: "0123456789" },
+  { name: "Binary", chars: "01" },
+  { name: "Symbols", chars: "@#$%&*+=?<>{}[]/\\|" },
+  { name: "Blocks", chars: "█▓▒░" },
+  { name: "LABS", chars: "LABS" },
+];
+
+function CharsetRow() {
+  const { params, set } = useLab();
+  return (
+    <Row
+      label="Characters"
+      hint="The glyphs the ASCII layer draws from (one picked per cell). Type your own set, or tap a preset. Keep ‘Vary glyphs’ on so the whole set actually shows."
+    >
+      <div className="space-y-2">
+        <Input
+          value={params.asciiCharset}
+          onChange={(e) => set("asciiCharset", e.target.value)}
+          spellCheck={false}
+          autoComplete="off"
+          placeholder={ASCII_CHARSET}
+          className="h-8 font-mono text-xs"
+        />
+        <div className="flex flex-wrap gap-1">
+          {CHARSET_PRESETS.map((c) => (
+            <Button
+              key={c.name}
+              type="button"
+              size="sm"
+              variant={params.asciiCharset === c.chars ? "default" : "outline"}
+              className="h-6 px-2 text-[10px]"
+              onClick={() => set("asciiCharset", c.chars)}
+            >
+              {c.name}
+            </Button>
+          ))}
+        </div>
+      </div>
+    </Row>
+  );
+}
+
 export function AsciiSection() {
   const { params } = useLab();
+  const ramp = params.asciiArt && params.asciiGlyphMode === "ramp";
   return (
     <Section value="ascii" title="ASCII">
       <SwitchRow k="ascii" label="ASCII overlay" hint="Stamp glyphs into the cells." />
@@ -321,6 +369,16 @@ export function AsciiSection() {
             step={0.01}
             fmt={(v) => v.toFixed(2)}
           />
+          {!ramp && (
+            <>
+              <CharsetRow />
+              <SwitchRow
+                k="asciiGlyphScatter"
+                label="Vary glyphs"
+                hint="Spread the picks across the WHOLE character set. Off = the legacy repeating pattern, which on a regular grid often collapses to just 1–2 glyphs (the ‘0 / +’ look)."
+              />
+            </>
+          )}
           <SelectRow
             k="asciiPlacement"
             label="Placement"

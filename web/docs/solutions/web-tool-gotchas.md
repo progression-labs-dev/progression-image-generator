@@ -40,3 +40,15 @@ obfuscates the name → use `@fontsource/inter` (real "Inter") and gate first dr
 WASM multi-threading needs cross-origin isolation (COOP same-origin + COEP require-corp). But
 require-corp blocks the cross-origin @imgly model CDN. So either run single-threaded (current —
 works, slower) OR self-host the model in `public/imgly/` + `publicPath` + headers. Don't half-enable.
+
+## ASCII glyphs collapse to "0 / +" (glyph-hash aliasing)
+Symptom: the ASCII overlay only ever shows 1–2 characters regardless of charset. Cause: the legacy
+`asciiGlyph` picks `charset[(cx*7919 + cy*104729) % len]`, but cell centres sit on a regular grid
+with an **even stride** (`2*cellSize`), so that index barely moves — at cellSize 16 it's a single
+glyph (`0`), at 8 it's a 2-glyph checkerboard (`0`/`+`). The full charset is never reached. Fix:
+`scatterGlyph()` runs the position seed through an xxhash-style avalanche finalizer (`Math.imul` +
+xorshifts) so low bits depend on all bits → whole charset, still deterministic per position. Gated
+behind `asciiGlyphScatter` (default **on** in the app, **unset/off** in `scripts/parity.mjs` so
+render.ts stays byte-identical to mosaic-core). Also added a **Characters** picker (free text +
+presets) bound to the existing `asciiCharset` param. Verified empirically: legacy=1–2 distinct vs
+scatter=33 distinct across cell sizes 8/10/16/18.

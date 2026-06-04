@@ -8,6 +8,7 @@ const SHARED = {
   spacing: 0,
   maskThreshold: 128,
   asciiCharset: ASCII_CHARSET,
+  asciiGlyphScatter: true,
   asciiFadeTop: 0.9,
   asciiFadeBottom: 0.05,
   asciiFadeSlope: 0.85,
@@ -132,7 +133,9 @@ export function paramsReducer(state: RenderParams, action: ParamsAction): Render
         solidColor: state.solidColor,
       });
     case "load":
-      return { ...action.params };
+      // merge over engine defaults so presets saved before a param existed still get
+      // a sensible value (e.g. asciiGlyphScatter / backgroundMode on older presets).
+      return { ...defaultParams(action.params.engine), ...action.params };
     default:
       return state;
   }

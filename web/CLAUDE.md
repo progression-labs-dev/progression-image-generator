@@ -42,3 +42,4 @@ recoloured through a gradient palette. Replaces a manual DaVinci workflow.
 2026-06-03: base-ui (not Radix) shadcn flavor -> rewrote controls (asChild→render, array ToggleGroup, Select string|null).
 2026-06-03: @imgly relative-URL → staticimgly 404 -> always pass a Blob.
 2026-06-03: React 19 StrictMode double-mount + loadedRef guard -> dropped guard, used cancel flag only.
+2026-06-04: ASCII glyphs collapsed to "0/+" -> legacy glyph hash aliases on even grid stride; added scatterGlyph avalanche (opt-in asciiGlyphScatter, default on) + Characters charset picker. Parity still byte-identical.
