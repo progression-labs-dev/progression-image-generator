@@ -1,3 +1,6 @@
+> [!WARNING]
+> **PUBLIC REPOSITORY - PLEASE CHANGE IT TO PRIVATE**
+
 # pl-imagery-lab
 
 Standalone tool for **Progression Labs "Pixel Dissolve" brand imagery** — turn any
